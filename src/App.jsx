@@ -1,368 +1,452 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 
-const CIBLES = [
-  { id: "legaltech", label: "⚖️ LegalTech (Yousign, Tomorro...)" },
-  { id: "avocat", label: "🏛️ Cabinet d'avocats" },
-  { id: "notaire", label: "📜 Étude notariale" },
-  { id: "media", label: "📰 Média juridique (Décideurs...)" },
-  { id: "dsi", label: "💻 DSI / Directeur technique" },
-  { id: "custom", label: "✏️ Autre (custom)" },
+const SYSTEM_PROMPT = `Tu es un expert en prospection B2B pour des solutions technologiques souveraines et confidentielles (stockage, chiffrement, données sensibles).
+
+Tu génères des messages WhatsApp de prospection ultra-personnalisés pour des C-levels, directeurs juridiques, notaires, avocats, directeurs IT, ou décideurs dans des secteurs régulés (finance, santé, juridique, énergie, industrie).
+
+RÈGLES ABSOLUES :
+- Ne jamais mentionner le nom de la plateforme ou de la société émettrice
+- Ton : direct, professionnel, humain — jamais corporate ou commercial
+- Longueur : 80-130 mots maximum, adapté WhatsApp
+- Structure : accroche personnalisée → valeur ajoutée claire → signal terrain ou contexte → appel à l'action court avec proposition de créneau
+- Si un contact commun est fourni : commence par lui
+- Si pas de contact commun : commence par un signal terrain (ce que les clients disent, ce qu'on observe dans leur secteur)
+- La proposition de valeur doit être spécifique au secteur cible : avocats → confidentialité dossiers clients / notaires → intégrité actes / finance → conformité / santé → RGPD données sensibles
+- Utilise le prénom du prospect, jamais "Monsieur/Madame"
+- Termine toujours par une question fermée avec un jour précis
+- Ne jamais utiliser de formule de politesse classique ni de signature corporate
+- Le message doit sonner comme envoyé par un fondateur, pas par un commercial
+
+FORMAT DE RÉPONSE :
+Génère exactement 2 versions du message :
+
+VERSION A — [label court ex: "Avec contact commun" ou "Signal secteur" selon le contexte]
+[message]
+
+VERSION B — [label court différent]
+[message]
+
+Ensuite ajoute une ligne :
+CONSEIL : [une phrase sur laquelle version envoyer et pourquoi]`;
+
+const SECTOR_OPTIONS = [
+  { value: "avocat", label: "Avocat / Cabinet" },
+  { value: "notaire", label: "Notaire" },
+  { value: "finance", label: "Finance / Banque" },
+  { value: "sante", label: "Santé / Médical" },
+  { value: "energie", label: "Énergie / Industrie" },
+  { value: "legaltech", label: "LegalTech / SaaS" },
+  { value: "immobilier", label: "Immobilier" },
+  { value: "autre", label: "Autre" },
 ];
 
-const TONS = [
-  { id: "direct", label: "Direct & business" },
-  { id: "warm", label: "Warm (contact commun)" },
-  { id: "curieux", label: "Curieux & humble" },
+const TONE_OPTIONS = [
+  { value: "direct", label: "Direct & Business" },
+  { value: "relation", label: "Warm & Relation" },
+  { value: "urgence", label: "Signal Urgence" },
 ];
-
-const SYSTEM_PROMPT = `Tu es un expert en développement commercial B2B pour DIV Protocol, une startup française qui a développé un drive souverain avec chiffrement post-quantique, zéro knowledge et hébergement en France, destiné aux professionnels manipulant des données ultra-sensibles (avocats, notaires, LegalTechs, DSI).
-
-Tu génères des messages WhatsApp de prospection B2B courts, percutants et authentiques pour Solan Desprès, co-fondateur de DIV Protocol.
-
-Règles absolues :
-- Maximum 6-8 lignes, aéré, lisible sur mobile
-- Jamais de bullet points ou de listes
-- Toujours commencer par "Hello [Prénom]," 
-- Toujours terminer par une question fermée sur la disponibilité (ex: "Tu as de la dispo mercredi ?")
-- Signer "Solan"
-- Ton naturel, humain, pas corporate
-- Mentionner le contact commun si fourni
-- Parler du problème du prospect AVANT de parler de DIV Protocol
-- Jamais de superlatifs ou de formules creuses
-- Le message doit sembler écrit à la main, pas généré
-
-Format de sortie : uniquement le message WhatsApp, rien d'autre.`;
 
 export default function App() {
   const [form, setForm] = useState({
     prenom: "",
     entreprise: "",
     poste: "",
-    cible: "legaltech",
-    ton: "direct",
-    contact_commun: "",
+    secteur: "",
+    tone: "direct",
+    contactCommun: "",
     contexte: "",
   });
-  const [message, setMessage] = useState("");
+  const [result, setResult] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const handleChange = (e) => {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const buildPrompt = () => {
+    const sectorLabel = SECTOR_OPTIONS.find((s) => s.value === form.secteur)?.label || form.secteur;
+    const toneLabel = TONE_OPTIONS.find((t) => t.value === form.tone)?.label || form.tone;
+
+    return `Génère un message WhatsApp de prospection pour :
+- Prénom : ${form.prenom || "inconnu"}
+- Entreprise : ${form.entreprise || "non précisée"}
+- Poste : ${form.poste || "non précisé"}
+- Secteur : ${sectorLabel}
+- Ton souhaité : ${toneLabel}
+${form.contactCommun ? `- Contact commun : ${form.contactCommun}` : "- Pas de contact commun"}
+${form.contexte ? `- Contexte spécifique : ${form.contexte}` : ""}
+
+Génère 2 versions selon les règles.`;
+  };
 
   const generate = async () => {
-    if (!form.prenom || !form.entreprise) {
-      setError("Prénom et entreprise sont requis.");
+    if (!form.prenom || !form.secteur) {
+      setError("Prénom et secteur sont obligatoires.");
       return;
     }
     setError("");
     setLoading(true);
-    setMessage("");
-
-    const cibleLabel = CIBLES.find((c) => c.id === form.cible)?.label || form.cible;
-    const tonLabel = TONS.find((t) => t.id === form.ton)?.label || form.ton;
-
-    const userPrompt = `Génère un message WhatsApp de prospection pour :
-- Prénom : ${form.prenom}
-- Entreprise : ${form.entreprise}
-- Poste : ${form.poste || "non précisé"}
-- Type de cible : ${cibleLabel}
-- Ton souhaité : ${tonLabel}
-- Contact commun : ${form.contact_commun || "aucun"}
-- Contexte spécifique : ${form.contexte || "aucun"}
-
-Génère le message maintenant.`;
+    setResult("");
 
     try {
+      const prompt = SYSTEM_PROMPT + "\n\n" + buildPrompt();
+
       const res = await fetch("/api/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: "user", content: userPrompt }],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
       });
+
+      if (!res.ok) throw new Error(`Erreur API : ${res.status}`);
+
       const data = await res.json();
-      const text = data.content?.map((b) => b.text || "").join("") || "";
-      setMessage(text.trim());
-    } catch (e) {
-      setError("Erreur lors de la génération. Réessaie.");
+      setResult(data.text || "Aucune réponse générée.");
+    } catch (err) {
+      setError("Erreur de génération. Vérifie ta clé API et le déploiement.");
+      console.error(err);
     } finally {
       setLoading(false);
     }
   };
 
-  const copy = () => {
-    navigator.clipboard.writeText(message);
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(result);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const regenerate = () => {
-    setMessage("");
-    generate();
+  const reset = () => {
+    setForm({ prenom: "", entreprise: "", poste: "", secteur: "", tone: "direct", contactCommun: "", contexte: "" });
+    setResult("");
+    setError("");
   };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "linear-gradient(135deg, #0a0f1e 0%, #0d1b3e 50%, #0a0f1e 100%)",
-      fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
-      padding: "40px 20px",
-    }}>
+    <div style={styles.root}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
-        * { box-sizing: border-box; }
-        ::placeholder { color: #4a5568; }
-        input:focus, textarea:focus, select:focus { outline: none; }
-        .btn-gen:hover { background: #2563eb !important; transform: translateY(-1px); }
-        .btn-gen:active { transform: translateY(0); }
-        .chip:hover { background: rgba(59,130,246,0.2) !important; border-color: #3b82f6 !important; color: #93c5fd !important; }
-        .copy-btn:hover { background: rgba(34,197,94,0.15) !important; }
-        .regen-btn:hover { background: rgba(255,255,255,0.08) !important; }
-        input, textarea, select {
-          background: rgba(255,255,255,0.04);
-          border: 1px solid rgba(255,255,255,0.1);
-          border-radius: 10px;
-          color: #e2e8f0;
-          padding: 12px 16px;
-          width: 100%;
-          font-family: 'DM Sans', sans-serif;
-          font-size: 14px;
-          transition: border-color 0.2s;
-        }
-        input:focus, textarea:focus, select:focus {
-          border-color: #3b82f6;
-          background: rgba(59,130,246,0.06);
-        }
-        select option { background: #1a2744; color: #e2e8f0; }
-        .pulse { animation: pulse 1.5s ease-in-out infinite; }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.5; }
-          50% { opacity: 1; }
-        }
-        .fade-in { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .dot-loader span {
-          display: inline-block;
-          width: 6px; height: 6px;
-          border-radius: 50%;
-          background: #3b82f6;
-          margin: 0 3px;
-          animation: bounce 1.2s ease-in-out infinite;
-        }
-        .dot-loader span:nth-child(2) { animation-delay: 0.2s; }
-        .dot-loader span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes bounce {
-          0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-          40% { transform: scale(1); opacity: 1; }
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { background: #0a0a0a; }
+        ::placeholder { color: #3a3a3a; }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: #c8f04a !important; }
+        .btn-main:hover { background: #d4f55a !important; transform: translateY(-1px); }
+        .btn-copy:hover { background: #1a2a00 !important; }
+        .btn-reset:hover { color: #c8f04a !important; }
+        .field-group { position: relative; }
+        select option { background: #111; color: #eee; }
+        .result-block { white-space: pre-wrap; }
       `}</style>
 
-      <div style={{ maxWidth: 680, margin: "0 auto" }}>
-
+      <div style={styles.container}>
         {/* Header */}
-        <div style={{ marginBottom: 36, textAlign: "center" }}>
-          <div style={{
-            display: "inline-flex", alignItems: "center", gap: 10,
-            background: "rgba(59,130,246,0.1)", border: "1px solid rgba(59,130,246,0.3)",
-            borderRadius: 100, padding: "6px 16px", marginBottom: 20,
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6", animation: "pulse 2s infinite" }} />
-            <span style={{ color: "#93c5fd", fontSize: 12, fontWeight: 600, letterSpacing: 1 }}>DIV PROTOCOL × CLAUDE API</span>
-          </div>
-          <h1 style={{ color: "#f8fafc", fontSize: 32, fontWeight: 700, margin: "0 0 8px", letterSpacing: -0.5, lineHeight: 1.2 }}>
-            Générateur de messages<br />
-            <span style={{ color: "#3b82f6" }}>WhatsApp prospect</span>
-          </h1>
-          <p style={{ color: "#64748b", fontSize: 14, margin: 0 }}>
-            Propulsé par Claude · Messages prêts à envoyer en 1 clic
-          </p>
+        <div style={styles.header}>
+          <div style={styles.badge}>PROSPECTION</div>
+          <h1 style={styles.title}>Outil Solan</h1>
+          <p style={styles.subtitle}>Génération de messages WhatsApp B2B — Secteurs régulés</p>
         </div>
 
-        {/* Form card */}
-        <div style={{
-          background: "rgba(255,255,255,0.03)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          borderRadius: 20, padding: 28, marginBottom: 20,
-        }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
-            <div>
-              <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 6 }}>PRÉNOM *</label>
-              <input placeholder="Guillaume" value={form.prenom} onChange={e => set("prenom", e.target.value)} />
+        {/* Form */}
+        <div style={styles.card}>
+          <div style={styles.sectionLabel}>PROSPECT</div>
+          <div style={styles.grid2}>
+            <div className="field-group">
+              <label style={styles.label}>Prénom *</label>
+              <input
+                name="prenom"
+                value={form.prenom}
+                onChange={handleChange}
+                placeholder="Guillaume"
+                style={styles.input}
+              />
             </div>
-            <div>
-              <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 6 }}>ENTREPRISE *</label>
-              <input placeholder="Yousign" value={form.entreprise} onChange={e => set("entreprise", e.target.value)} />
+            <div className="field-group">
+              <label style={styles.label}>Entreprise</label>
+              <input
+                name="entreprise"
+                value={form.entreprise}
+                onChange={handleChange}
+                placeholder="Doctrine"
+                style={styles.input}
+              />
             </div>
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 6 }}>POSTE</label>
-            <input placeholder="CEO, CTO, Directeur Juridique..." value={form.poste} onChange={e => set("poste", e.target.value)} />
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 10 }}>TYPE DE CIBLE</label>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {CIBLES.map(c => (
-                <button key={c.id} className="chip" onClick={() => set("cible", c.id)} style={{
-                  padding: "7px 14px", borderRadius: 100, fontSize: 12, fontWeight: 500,
-                  cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit",
-                  background: form.cible === c.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.04)",
-                  border: form.cible === c.id ? "1px solid #3b82f6" : "1px solid rgba(255,255,255,0.1)",
-                  color: form.cible === c.id ? "#93c5fd" : "#64748b",
-                }}>
-                  {c.label}
-                </button>
-              ))}
+            <div className="field-group">
+              <label style={styles.label}>Poste</label>
+              <input
+                name="poste"
+                value={form.poste}
+                onChange={handleChange}
+                placeholder="CEO / Directeur Juridique"
+                style={styles.input}
+              />
             </div>
-          </div>
-
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 10 }}>TON</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {TONS.map(t => (
-                <button key={t.id} className="chip" onClick={() => set("ton", t.id)} style={{
-                  padding: "7px 16px", borderRadius: 100, fontSize: 12, fontWeight: 500,
-                  cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit",
-                  background: form.ton === t.id ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.04)",
-                  border: form.ton === t.id ? "1px solid #3b82f6" : "1px solid rgba(255,255,255,0.1)",
-                  color: form.ton === t.id ? "#93c5fd" : "#64748b",
-                }}>
-                  {t.label}
-                </button>
-              ))}
+            <div className="field-group">
+              <label style={styles.label}>Secteur *</label>
+              <select
+                name="secteur"
+                value={form.secteur}
+                onChange={handleChange}
+                style={styles.input}
+              >
+                <option value="">Sélectionner</option>
+                {SECTOR_OPTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 6 }}>CONTACT COMMUN</label>
-            <input placeholder="Germain, CTO d'Allaw..." value={form.contact_commun} onChange={e => set("contact_commun", e.target.value)} />
+          <div style={styles.sectionLabel}>CONTEXTE</div>
+          <div className="field-group" style={{ marginBottom: 16 }}>
+            <label style={styles.label}>Contact commun</label>
+            <input
+              name="contactCommun"
+              value={form.contactCommun}
+              onChange={handleChange}
+              placeholder="Germain, CTO d'Allaw"
+              style={styles.input}
+            />
           </div>
-
-          <div style={{ marginBottom: 20 }}>
-            <label style={{ color: "#94a3b8", fontSize: 11, fontWeight: 600, letterSpacing: 0.8, display: "block", marginBottom: 6 }}>CONTEXTE SPÉCIFIQUE</label>
+          <div className="field-group" style={{ marginBottom: 16 }}>
+            <label style={styles.label}>Contexte spécifique</label>
             <textarea
-              placeholder="Ex: ils ont eu une fuite de données récemment, ils cherchent à s'étendre aux notaires..."
+              name="contexte"
               value={form.contexte}
-              onChange={e => set("contexte", e.target.value)}
-              rows={3}
-              style={{ resize: "vertical", lineHeight: 1.6 }}
+              onChange={handleChange}
+              placeholder="Actualité, signal terrain, info sur la boîte, projet en cours..."
+              style={{ ...styles.input, height: 80, resize: "vertical" }}
             />
           </div>
 
-          {error && (
-            <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 10, padding: "10px 14px", color: "#fca5a5", fontSize: 13, marginBottom: 14 }}>
-              {error}
-            </div>
-          )}
+          <div style={styles.sectionLabel}>TON</div>
+          <div style={styles.toneRow}>
+            {TONE_OPTIONS.map((t) => (
+              <button
+                key={t.value}
+                onClick={() => setForm({ ...form, tone: t.value })}
+                style={{
+                  ...styles.toneBtn,
+                  ...(form.tone === t.value ? styles.toneBtnActive : {}),
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
 
-          <button className="btn-gen" onClick={generate} disabled={loading} style={{
-            width: "100%", padding: "14px", borderRadius: 12, border: "none",
-            background: loading ? "#1e3a6e" : "#1d4ed8",
-            color: "#fff", fontSize: 15, fontWeight: 600, cursor: loading ? "default" : "pointer",
-            transition: "all 0.2s", fontFamily: "inherit",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-          }}>
-            {loading ? (
-              <>
-                <span style={{ color: "#93c5fd", fontSize: 13 }}>Claude rédige</span>
-                <div className="dot-loader"><span /><span /><span /></div>
-              </>
-            ) : (
-              <>✦ Générer le message</>
-            )}
+          {error && <div style={styles.error}>{error}</div>}
+
+          <button
+            className="btn-main"
+            onClick={generate}
+            disabled={loading}
+            style={styles.btnMain}
+          >
+            {loading ? "Génération..." : "Générer les messages →"}
           </button>
         </div>
 
         {/* Result */}
-        {message && (
-          <div className="fade-in" style={{
-            background: "rgba(255,255,255,0.03)",
-            border: "1px solid rgba(59,130,246,0.25)",
-            borderRadius: 20, padding: 28,
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 18 }}>💬</span>
-                <span style={{ color: "#93c5fd", fontSize: 12, fontWeight: 600, letterSpacing: 0.8 }}>MESSAGE WHATSAPP GÉNÉRÉ</span>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button className="regen-btn" onClick={regenerate} style={{
-                  padding: "7px 14px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)",
-                  background: "transparent", color: "#64748b", fontSize: 12, cursor: "pointer",
-                  fontFamily: "inherit", transition: "all 0.15s",
-                }}>
-                  ↺ Regénérer
+        {result && (
+          <div style={styles.resultCard}>
+            <div style={styles.resultHeader}>
+              <div style={styles.sectionLabel}>RÉSULTAT</div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <button
+                  className="btn-copy"
+                  onClick={copyToClipboard}
+                  style={styles.btnCopy}
+                >
+                  {copied ? "✓ Copié" : "Copier tout"}
                 </button>
-                <button className="copy-btn" onClick={copy} style={{
-                  padding: "7px 16px", borderRadius: 8,
-                  border: "1px solid rgba(34,197,94,0.4)",
-                  background: copied ? "rgba(34,197,94,0.15)" : "transparent",
-                  color: copied ? "#86efac" : "#22c55e",
-                  fontSize: 12, fontWeight: 600, cursor: "pointer",
-                  fontFamily: "inherit", transition: "all 0.15s",
-                }}>
-                  {copied ? "✓ Copié !" : "Copier"}
+                <button
+                  className="btn-reset"
+                  onClick={reset}
+                  style={styles.btnReset}
+                >
+                  Nouveau
                 </button>
               </div>
             </div>
-
-            {/* WhatsApp bubble */}
-            <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 14, padding: "4px 8px 8px" }}>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "10px 12px 8px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 8,
-              }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%",
-                  background: "linear-gradient(135deg, #1d4ed8, #3b82f6)",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "#fff", fontSize: 12, fontWeight: 700,
-                }}>S</div>
-                <div>
-                  <div style={{ color: "#e2e8f0", fontSize: 12, fontWeight: 600 }}>Solan · DIV Protocol</div>
-                  <div style={{ color: "#22c55e", fontSize: 10 }}>● En ligne</div>
-                </div>
-              </div>
-              <div style={{
-                background: "#005c4b", borderRadius: "2px 12px 12px 12px",
-                padding: "12px 14px", margin: "0 4px", maxWidth: "85%",
-              }}>
-                <pre style={{ color: "#e9edef", fontSize: 13.5, lineHeight: 1.65, margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit" }}>
-                  {message}
-                </pre>
-                <div style={{ color: "#8ea8a0", fontSize: 10, textAlign: "right", marginTop: 6 }}>
-                  {new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} ✓✓
-                </div>
-              </div>
-            </div>
-
-            <div style={{
-              marginTop: 14, padding: "10px 14px",
-              background: "rgba(59,130,246,0.06)", borderRadius: 10,
-              display: "flex", alignItems: "center", gap: 8,
-            }}>
-              <span style={{ fontSize: 14 }}>⚡</span>
-              <span style={{ color: "#64748b", fontSize: 12 }}>
-                Conseil : personnalise à la main si tu as un signal récent (article LinkedIn, actualité de leur boîte).
-              </span>
+            <div className="result-block" style={styles.resultText}>
+              {result}
             </div>
           </div>
         )}
 
-        <div style={{ textAlign: "center", marginTop: 28, color: "#334155", fontSize: 11 }}>
-          DIV Protocol · Souveraineté des données, dès la prospection.
+        <div style={styles.footer}>
+          Outil Solan — Usage interne
         </div>
       </div>
     </div>
   );
 }
+
+const styles = {
+  root: {
+    minHeight: "100vh",
+    background: "#0a0a0a",
+    fontFamily: "'DM Mono', monospace",
+    color: "#eee",
+    padding: "40px 16px 80px",
+  },
+  container: {
+    maxWidth: 680,
+    margin: "0 auto",
+  },
+  header: {
+    marginBottom: 40,
+  },
+  badge: {
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 10,
+    letterSpacing: 4,
+    color: "#c8f04a",
+    marginBottom: 12,
+  },
+  title: {
+    fontFamily: "'Syne', sans-serif",
+    fontSize: 48,
+    fontWeight: 800,
+    color: "#f5f5f5",
+    lineHeight: 1,
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 13,
+    color: "#555",
+    letterSpacing: 0.5,
+  },
+  card: {
+    background: "#111",
+    border: "1px solid #1e1e1e",
+    borderRadius: 12,
+    padding: 32,
+    marginBottom: 24,
+  },
+  sectionLabel: {
+    fontFamily: "'DM Mono', monospace",
+    fontSize: 10,
+    letterSpacing: 3,
+    color: "#444",
+    marginBottom: 16,
+    marginTop: 8,
+  },
+  grid2: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    gap: 12,
+    marginBottom: 16,
+  },
+  label: {
+    display: "block",
+    fontSize: 11,
+    color: "#555",
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  input: {
+    width: "100%",
+    background: "#0a0a0a",
+    border: "1px solid #222",
+    borderRadius: 8,
+    padding: "12px 14px",
+    color: "#eee",
+    fontSize: 13,
+    fontFamily: "'DM Mono', monospace",
+    transition: "border-color 0.2s",
+    appearance: "none",
+  },
+  toneRow: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 28,
+  },
+  toneBtn: {
+    flex: 1,
+    padding: "10px 8px",
+    background: "transparent",
+    border: "1px solid #222",
+    borderRadius: 8,
+    color: "#555",
+    fontSize: 12,
+    fontFamily: "'DM Mono', monospace",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+  toneBtnActive: {
+    border: "1px solid #c8f04a",
+    color: "#c8f04a",
+    background: "#0f1800",
+  },
+  btnMain: {
+    width: "100%",
+    padding: "16px",
+    background: "#c8f04a",
+    border: "none",
+    borderRadius: 8,
+    color: "#0a0a0a",
+    fontSize: 14,
+    fontFamily: "'Syne', sans-serif",
+    fontWeight: 700,
+    cursor: "pointer",
+    letterSpacing: 0.5,
+    transition: "all 0.15s",
+  },
+  error: {
+    background: "#1a0000",
+    border: "1px solid #3a0000",
+    borderRadius: 8,
+    padding: "12px 14px",
+    color: "#ff6b6b",
+    fontSize: 12,
+    marginBottom: 16,
+  },
+  resultCard: {
+    background: "#111",
+    border: "1px solid #1e1e1e",
+    borderRadius: 12,
+    padding: 32,
+    marginBottom: 24,
+  },
+  resultHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  resultText: {
+    fontSize: 13,
+    lineHeight: 1.8,
+    color: "#ccc",
+  },
+  btnCopy: {
+    padding: "8px 16px",
+    background: "#0f1800",
+    border: "1px solid #c8f04a",
+    borderRadius: 6,
+    color: "#c8f04a",
+    fontSize: 12,
+    fontFamily: "'DM Mono', monospace",
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+  btnReset: {
+    padding: "8px 16px",
+    background: "transparent",
+    border: "1px solid #222",
+    borderRadius: 6,
+    color: "#444",
+    fontSize: 12,
+    fontFamily: "'DM Mono', monospace",
+    cursor: "pointer",
+    transition: "all 0.15s",
+  },
+  footer: {
+    textAlign: "center",
+    fontSize: 11,
+    color: "#2a2a2a",
+    letterSpacing: 2,
+  },
+};
